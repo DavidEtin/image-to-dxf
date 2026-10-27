@@ -1,0 +1,17 @@
+# Virtual environment (each computer creates its own)
+.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Generated files (can always be re-created by running the scripts)
+test_images/
+*.dxf
+*_preview.png
+
+# Editor / OS junk
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
