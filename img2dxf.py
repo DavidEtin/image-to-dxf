@@ -39,7 +39,7 @@ class Settings:
     """All the knobs. Values left as None get a default based on thickness."""
 
     width_mm: float                      # final width of the design
-    thickness_mm: float = 2.0            # steel thickness
+    thickness_mm: float = 3.0            # steel thickness
     min_width_mm: float | None = None    # thinnest allowed metal line
     min_hole_mm: float | None = None     # smaller holes get filled
     min_detail_mm: float | None = None   # smaller metal specks get removed
@@ -483,7 +483,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("input", help="input image (png/jpg)")
     p.add_argument("output", help="output DXF file")
     p.add_argument("--width-mm", type=float, required=True, help="final design width in mm")
-    p.add_argument("--thickness-mm", type=float, default=2.0, help="steel thickness (default 2)")
+    p.add_argument("--thickness-mm", type=float, default=3.0, help="steel thickness (default 3)")
     p.add_argument("--min-width-mm", type=float, help="thinnest metal line (default = thickness)")
     p.add_argument("--min-hole-mm", type=float, help="fill holes smaller than this (default = thickness)")
     p.add_argument("--min-detail-mm", type=float, help="remove specks smaller than this (default = 1.5x thickness)")

@@ -11,6 +11,13 @@ It does more than trace outlines. It also makes the design cuttable:
 - **Warns about low-resolution images** that would give stepped edges
 - Saves a **preview image** where everything it changed is shown in orange
 
+## Machine
+
+Defaults are set for steel cut on a **TRUMPF TruLaser 5030 fiber** (full sheet 3000 x 1500 mm), 3 mm steel, electrostatic powder coating.
+The minimum line width is still an estimate: cut the calibration coupon from the web demo to measure it.
+
+Web demo: https://davidetin.github.io/image-to-dxf/
+
 ## Setup (Windows)
 
 ```
@@ -39,7 +46,7 @@ python img2dxf.py test_images\text.png text.dxf --width-mm 400 --mode stencil
 | Option | Default | Meaning |
 |--------|---------|---------|
 | `--width-mm` | (required) | Final width of the design |
-| `--thickness-mm` | 2 | Steel thickness; other limits are based on it |
+| `--thickness-mm` | 3 | Steel thickness; other limits are based on it |
 | `--min-width-mm` | = thickness | Thinnest allowed metal line |
 | `--bridge-width-mm` | 1.5 x thickness | Width of added bridges |
 | `--margin-mm` | 15 | Plate border in stencil mode |
