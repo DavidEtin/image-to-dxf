@@ -241,11 +241,14 @@ def remove_small_parts(mask: np.ndarray, min_area_px: float) -> tuple[np.ndarray
 
 def thicken_thin_parts(mask: np.ndarray, min_width_px: int) -> tuple[np.ndarray, int]:
     """
-    Find metal that is thinner than min_width_px and grow it.
+    Make metal that is thinner than min_width_px exactly min_width_px wide.
 
     How: an "opening" with a round brush of that size erases everything the
-    brush can't fit into. Whatever disappeared is "too thin". We grow (dilate)
-    those thin parts by the brush size and add them back.
+    brush can't fit into. Whatever disappeared is "too thin". We take the
+    centre line (skeleton) of those thin parts and draw it again with the
+    round brush, so each thin part ends up min_width_px wide. It is never
+    made wider than that, so a thin tip does not end up thicker than the
+    branch it grows from.
     Returns (mask, number of pixels added).
     """
     if min_width_px < 2:
@@ -257,10 +260,26 @@ def thicken_thin_parts(mask: np.ndarray, min_width_px: int) -> tuple[np.ndarray,
     opened = cv2.dilate(opened, np.ones((3, 3), np.uint8))
     thin = cv2.bitwise_and(mask, cv2.bitwise_not(opened))
     thin = _keep_long_parts(thin, min_length_px=min_width_px)
-    grown = cv2.dilate(thin, brush)
+    # Centre line of the whole shape, kept only where the shape is thin
+    # (a little beyond, so the new width blends into the thicker part).
+    near_thin = cv2.dilate(thin, brush)
+    centre = cv2.bitwise_and(skeleton(mask), near_thin)
+    grown = cv2.dilate(centre, brush)
     out = cv2.bitwise_or(mask, grown)
     added = int(np.count_nonzero(out) - np.count_nonzero(mask))
     return out, added
+
+
+def skeleton(mask: np.ndarray) -> np.ndarray:
+    """One-pixel-wide centre lines of a mask (morphological skeleton)."""
+    cross = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+    img = (mask > 0).astype(np.uint8) * METAL
+    skel = np.zeros_like(img)
+    while cv2.countNonZero(img):
+        eroded = cv2.erode(img, cross)
+        skel = cv2.bitwise_or(skel, cv2.subtract(img, cv2.dilate(eroded, cross)))
+        img = eroded
+    return skel
 
 
 def _keep_long_parts(mask: np.ndarray, min_length_px: int) -> np.ndarray:
