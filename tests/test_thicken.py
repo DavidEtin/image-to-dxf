@@ -24,3 +24,7 @@ def test_thin_line_becomes_minimum_width():
 def test_thick_line_is_not_changed():
     out, added = thicken_thin_parts(make_line(30), 15)
     assert added == 0
+
+def test_line_at_minimum_is_not_changed():
+    out, added = thicken_thin_parts(make_line(15), 15)
+    assert added == 0
