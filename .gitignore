@@ -15,3 +15,4 @@ test_images/
 .idea/
 Thumbs.db
 desktop.ini
+.pytest_cache/
