@@ -215,6 +215,13 @@ footer .wrap { padding-block: 22px; display: flex; gap: 16px; justify-content: s
           </div>
 
           <div class="field">
+            <span class="label">תוספות</span>
+            <label class="check"><input type="checkbox" id="optStand" checked> לשונית בתחתית, לחריץ בבסיס העץ (12 מ״מ)</label>
+            <label class="check"><input type="checkbox" id="optJoin" checked> לחבר חלקים נפרדים לחתיכה אחת</label>
+            <label class="check"><input type="checkbox" id="optFrame"> מסגרת מסביב (6 מ״מ), לתמונה מפורטת</label>
+          </div>
+
+          <div class="field">
             <label for="finish">גימור</label>
             <select id="finish">
               <option value="black" selected>צבע אלקטרוסטטי שחור</option>
@@ -388,7 +395,16 @@ function thickenThin(mask, w, h, minWidth) {
     if (Math.max(L.maxX[i] - L.minX[i], L.maxY[i] - L.minY[i]) + 1 >= minWidth) keep[i] = 1;  // corner tips are short
   }
   for (let p = 0; p < w * h; p++) thin[p] = keep[L.labels[p]];
-  const grown = dilate(thin, w, h, r), out = new Uint8Array(w * h);
+  // Redraw only the centre line (ridge of the distance map) of the thin parts with the brush,
+  // so they end up exactly minWidth wide instead of minWidth wider than before.
+  const near = dilate(thin, w, h, r), dist = distanceTo(mask, w, h, 0), centre = new Uint8Array(w * h);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const p = y * w + x; if (!near[p] || !mask[p]) continue;
+    const d = dist[p]; let ridge = true;
+    for (let dy = -1; dy <= 1 && ridge; dy++) for (let dx = -1; dx <= 1; dx++) if (dist[p + dy * w + dx] > d) { ridge = false; break; }
+    if (ridge) centre[p] = 1;
+  }
+  const grown = dilate(centre, w, h, r), out = new Uint8Array(w * h);
   let added = 0;
   for (let i = 0; i < w * h; i++) { out[i] = mask[i] || grown[i] ? 1 : 0; if (out[i] && !mask[i]) added++; }
   return { mask: out, added };
@@ -633,6 +649,52 @@ function contentBox(mask, w, h) {
   return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
 }
 
+// Border frame around the picture: in a detailed scene it gives every part something to hang on.
+function addFrame(mask, w, h, f) {
+  const out = mask.slice(); f = Math.max(1, f);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (y < f || y >= h - f || x < f || x >= w - f) out[y * w + x] = 1;
+  return out;
+}
+
+// A straight tab under the lowest part of the design, for the slot in the wooden stand.
+// Returns a taller mask (rows added at the bottom).
+function addStand(mask, w, h, tabPx, minLenPx, overlapPx, extraPx) {
+  let top = h, bottom = -1;
+  for (let p = 0; p < w * h; p++) if (mask[p]) { const y = (p / w) | 0; if (y < top) top = y; if (y > bottom) bottom = y; }
+  if (bottom < 0) return { mask: mask.slice(), h };
+  const bandTop = Math.max(top, bottom - Math.max(2, ((bottom - top) / 25) | 0));
+  let x0 = w, x1 = -1;
+  for (let y = bandTop; y <= bottom; y++) for (let x = 0; x < w; x++) if (mask[y * w + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x; }
+  if (x1 - x0 < minLenPx) { const c = (x0 + x1) >> 1; x0 = c - (minLenPx >> 1); x1 = c + (minLenPx >> 1); }
+  const H = h + tabPx + extraPx, out = new Uint8Array(w * H); out.set(mask);
+  for (let y = Math.max(0, bottom - overlapPx); y <= bottom + tabPx; y++)
+    for (let x = Math.max(0, x0); x <= Math.min(w - 1, x1); x++) out[y * w + x] = 1;
+  return { mask: out, h: H };
+}
+
+// Connect every separate piece to the biggest one with the shortest straight bar.
+function joinParts(mask, w, h, width, maxRounds = 50) {
+  const out = mask.slice(); let joined = 0;
+  for (let round = 0; round < maxRounds; round++) {
+    const L = label(out, w, h, 1, 8); if (L.count <= 1) break;
+    let main = 1; for (let i = 2; i <= L.count; i++) if (L.areas[i] > L.areas[main]) main = i;
+    const m = new Uint8Array(w * h); for (let p = 0; p < w * h; p++) m[p] = L.labels[p] === main ? 1 : 0;
+    const d = distanceTo(m, w, h, 1);
+    let best = Infinity, bp = -1;
+    for (let p = 0; p < w * h; p++) if (out[p] && L.labels[p] !== main && d[p] < best) { best = d[p]; bp = p; }
+    if (bp < 0) break;
+    const px = bp % w, py = (bp - px) / w, r = Math.ceil(Math.sqrt(best)) + 2;
+    let bq = -1, bd = Infinity;
+    for (let y = Math.max(0, py - r); y <= Math.min(h - 1, py + r); y++) for (let x = Math.max(0, px - r); x <= Math.min(w - 1, px + r); x++) {
+      const q = y * w + x; if (!m[q]) continue; const dd = (x - px) ** 2 + (y - py) ** 2; if (dd < bd) { bd = dd; bq = q; }
+    }
+    if (bq < 0) break;
+    stampBar(out, w, h, px, py, bq % w, Math.floor(bq / w), width);
+    joined++;
+  }
+  return { mask: out, joined };
+}
+
 // Everything after the image is at real size. design: Uint8Array mask (dw x dh).
 function makeCuttable(design, dw, dh, o) {
   const ppm = o.ppm, px = mm => Math.max(1, Math.round(mm * ppm));
@@ -643,6 +705,7 @@ function makeCuttable(design, dw, dh, o) {
     const m = px(o.marginMm); w = dw + 2 * m; h = dh + 2 * m; src = new Uint8Array(w * h).fill(1);
     for (let y = 0; y < dh; y++) for (let x = 0; x < dw; x++) if (design[y * dw + x]) src[(y + m) * w + x + m] = 0;
   }
+  if (o.frameMm > 0) src = addFrame(src, w, h, px(o.frameMm));
   const W = w + 2 * border, H = h + 2 * border, before = new Uint8Array(W * H);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) before[(y + border) * W + x + border] = src[y * w + x];
 
@@ -651,13 +714,19 @@ function makeCuttable(design, dw, dh, o) {
   const s2 = thickenThin(s1.mask, W, H, minW);
   const s3 = fillSmallHoles(s2.mask, W, H, area(o.minHoleMm));
   const s4 = addBridges(s3.mask, W, H, bridgeW);
-  const mask = s4.mask;
-  const loops = traceLoops(mask, W, H).map(l => simplifyLoop(l, Math.max(0.35, 0.1 * ppm)));
-  const polys = loopsToMm(loops, H, ppm);
-  const pieces = label(mask, W, H, 1, 8).count;
+  let mask = s4.mask, H2 = H, beforeOut = before, joined = 0, stand = false;
+  if (o.standMm > 0) {
+    const st = addStand(mask, W, H, px(o.standMm), px(60), px(4), border);
+    mask = st.mask; H2 = st.h; stand = true;
+    beforeOut = new Uint8Array(W * H2); beforeOut.set(before);
+  }
+  if (o.join) { const j = joinParts(mask, W, H2, bridgeW); mask = j.mask; joined = j.joined; }
+  const loops = traceLoops(mask, W, H2).map(l => simplifyLoop(l, Math.max(0.35, 0.1 * ppm)));
+  const polys = loopsToMm(loops, H2, ppm);
+  const pieces = label(mask, W, H2, 1, 8).count;
   return {
-    w: W, h: H, before, mask, loops, polys,
-    stats: { removed: s1.removed, addedMm2: s2.added / ppm / ppm, filled: s3.filled, bridges: s4.bridges, pieces, outlines: polys.length, size: sizeOf(polys),
+    w: W, h: H2, before: beforeOut, mask, loops, polys,
+    stats: { removed: s1.removed, addedMm2: s2.added / ppm / ppm, filled: s3.filled, bridges: s4.bridges, joined, stand, pieces, outlines: polys.length, size: sizeOf(polys),
              cutM: cutLength(polys) / 1000 }
   };
 }
@@ -779,7 +848,18 @@ function makeCuttable(design, dw, dh, o) {
     const url = URL.createObjectURL(file), img = new Image();
     img.onload = () => {
       const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight;
-      const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0);
+      const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(img, 0, 0);
+      // A PNG with a transparent background ("remove background" in Paint or a phone) is a ready silhouette:
+      // every visible pixel is steel, so light clothes do not turn into holes.
+      const data = g.getImageData(0, 0, c.width, c.height), px = data.data;
+      let clear = 0; for (let i = 3; i < px.length; i += 4) if (px[i] < 128) clear++;
+      if (clear >= 0.01 * c.width * c.height) {
+        for (let i = 0; i < px.length; i += 4) { const v = px[i + 3] >= 128 ? 0 : 255; px[i] = px[i + 1] = px[i + 2] = v; px[i + 3] = 255; }
+        g.putImageData(data, 0, 0);
+        showNotes([{ ok: true, text: "התמונה עם רקע שקוף: כל מה שנראה בה הופך לפלדה." }]);
+      } else {
+        g.globalCompositeOperation = "destination-over"; g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+      }
       URL.revokeObjectURL(url); loadCanvas(c, file.name);
     };
     img.onerror = () => { URL.revokeObjectURL(url); showNotes([{ text: "הדפדפן לא הצליח לפתוח את התמונה. נסו לשמור אותה כ-PNG או JPG." }]); };
@@ -821,7 +901,8 @@ function makeCuttable(design, dw, dh, o) {
     const design = new Uint8Array(dw * dh); for (let i = 0; i < design.length; i++) design[i] = g1[i] <= thr ? 1 : 0;
     const srcPpm = (box.w / cap) / widthMm;
     result = makeCuttable(design, dw, dh, {
-      ppm, mode, minWidthMm: t, minHoleMm: t, minDetailMm: 1.5 * t, bridgeMm: 1.5 * t, marginMm: 15
+      ppm, mode, minWidthMm: t, minHoleMm: t, minDetailMm: 1.5 * t, bridgeMm: 1.5 * t, marginMm: 15,
+      standMm: $("optStand").checked ? 12 : 0, join: $("optJoin").checked, frameMm: $("optFrame").checked ? 6 : 0
     });
     result.srcPpm = srcPpm; result.widthMm = widthMm;
     draw(); report();
@@ -864,7 +945,8 @@ function makeCuttable(design, dw, dh, o) {
       ["גודל (מ״מ)", `${fmt(s.size[0])} × ${fmt(s.size[1])}`],
       ["קווי חיתוך", s.outlines],
       ["חלקים", s.pieces],
-      ["גשרים שנוספו", s.bridges],
+      ["גשרים שנוספו", s.bridges + s.joined],
+      ["לשונית לבסיס", s.stand ? "נוספה" : "אין"],
       ["שטח שהועבה (מ״מ²)", fmt(s.addedMm2)],
       ["פרטים שהוסרו", s.removed],
       ["חורים שמולאו", s.filled],
@@ -912,6 +994,7 @@ function makeCuttable(design, dw, dh, o) {
   $("drop").addEventListener("drop", e => loadFile(e.dataTransfer.files[0]));
   $("widthMm").addEventListener("change", schedule);
   $("thickness").addEventListener("change", schedule);
+  for (const id of ["optStand", "optJoin", "optFrame"]) $(id).addEventListener("change", schedule);
   $("invert").addEventListener("change", schedule);
   $("thr").addEventListener("change", schedule);
   $("thrAuto").addEventListener("change", () => { $("thr").disabled = $("thrAuto").checked; schedule(); });
