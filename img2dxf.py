@@ -49,6 +49,8 @@ class Settings:
     simplify_mm: float = 0.1             # how far outlines may move when simplified
     px_per_mm: float = 5.0               # working resolution
     threshold: int | None = None         # 0-255, None = automatic (Otsu)
+    stand_mm: float = 0.0                # >0: add a straight tab this tall under the design, for a slotted stand
+    join_parts: bool = False             # connect separate pieces to the main piece with short bridges
 
     def __post_init__(self) -> None:
         if self.width_mm <= 0:
@@ -84,6 +86,8 @@ class Report:
     thin_area_added_mm2: float = 0.0
     small_holes_filled: int = 0
     bridges_added: int = 0
+    stand_added: bool = False
+    parts_joined: int = 0
     source_px_per_mm: float = 0.0
     warnings: list[str] = field(default_factory=list)
 
@@ -134,8 +138,15 @@ def disk(diameter_px: int) -> np.ndarray:
 # Loading and saving images (works with Hebrew/Unicode paths on Windows)
 # ---------------------------------------------------------------------------
 
-def load_grayscale(path: str | Path) -> np.ndarray:
-    """Read an image as grayscale. Transparent areas become white."""
+def load_grayscale(path: str | Path, use_alpha: bool = True) -> np.ndarray:
+    """Read an image as grayscale.
+
+    A PNG with a transparent background (for example after "remove background" in
+    Paint or a phone gallery) is used as a ready silhouette: every visible pixel
+    becomes black, every transparent pixel white. Colors inside the subject are
+    ignored, so a white shirt does not turn into a hole.
+    With use_alpha=False, transparent areas just become white and colors count.
+    """
     if not Path(path).is_file():
         raise ValueError(f"File not found: {path}")
     data = np.fromfile(str(path), dtype=np.uint8)
@@ -145,10 +156,18 @@ def load_grayscale(path: str | Path) -> np.ndarray:
     if img.ndim == 2:
         return img
     if img.shape[2] == 4:
-        alpha = img[:, :, 3:4].astype(np.float32) / 255.0
+        alpha = img[:, :, 3]
+        if use_alpha and has_transparency(alpha):
+            return np.where(alpha >= 128, 0, 255).astype(np.uint8)
+        a = alpha[:, :, None].astype(np.float32) / 255.0
         rgb = img[:, :, :3].astype(np.float32)
-        img = (rgb * alpha + 255.0 * (1 - alpha)).astype(np.uint8)
+        img = (rgb * a + 255.0 * (1 - a)).astype(np.uint8)
     return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+
+def has_transparency(alpha: np.ndarray, min_fraction: float = 0.01) -> bool:
+    """True when at least 1% of the image is see-through (a real cut-out, not a stray pixel)."""
+    return float(np.mean(alpha < 128)) >= min_fraction
 
 
 def save_image(path: str | Path, img: np.ndarray) -> None:
@@ -441,6 +460,60 @@ def make_preview(before: np.ndarray, after: np.ndarray) -> np.ndarray:
     return img
 
 
+def add_stand(mask: np.ndarray, tab_px: int, min_len_px: int, overlap_px: int) -> np.ndarray:
+    """Add a straight tab under the design that slides into a slot in the stand.
+
+    The tab spans the lowest part of the design (at least min_len_px long),
+    overlaps it by overlap_px so they are one piece, and hangs tab_px below it.
+    """
+    ys, xs = np.nonzero(mask)
+    if ys.size == 0:
+        return mask.copy()
+    bottom, top = ys.max(), ys.min()
+    band = mask[max(top, bottom - max(2, (bottom - top) // 25)):bottom + 1]
+    cols = np.nonzero(band.any(axis=0))[0]
+    x0, x1 = int(cols.min()), int(cols.max())
+    if x1 - x0 < min_len_px:
+        c = (x0 + x1) // 2
+        x0, x1 = c - min_len_px // 2, c + min_len_px // 2
+    out = cv2.copyMakeBorder(mask, 0, tab_px + 2, 0, 0, cv2.BORDER_CONSTANT, value=EMPTY)
+    cv2.rectangle(out, (max(0, x0), int(bottom - overlap_px)), (min(out.shape[1] - 1, x1), int(bottom + tab_px)),
+                  METAL, thickness=-1)
+    return out
+
+
+def join_parts(mask: np.ndarray, bridge_px: int, max_rounds: int = 50) -> tuple[np.ndarray, int]:
+    """Connect every separate piece to the biggest one with the shortest straight bridge.
+
+    A design must be one piece of steel, or loose parts fall out when cut.
+    Returns (new mask, number of bridges drawn).
+    """
+    out = (mask > 0).astype(np.uint8)
+    joined = 0
+    for _ in range(max_rounds):
+        n, lab, stats, _ = cv2.connectedComponentsWithStats(out, connectivity=8)
+        if n <= 2:
+            break
+        main = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        dist = cv2.distanceTransform((lab != main).astype(np.uint8), cv2.DIST_L2, 5)
+        best = None
+        for c in range(1, n):
+            if c == main:
+                continue
+            cy, cx = np.nonzero(lab == c)
+            i = int(np.argmin(dist[cy, cx]))
+            if best is None or dist[cy[i], cx[i]] < best[0]:
+                best = (dist[cy[i], cx[i]], int(cx[i]), int(cy[i]))
+        _, px, py = best
+        r = int(best[0]) + 3
+        y0, x0 = max(0, py - r), max(0, px - r)
+        my, mx = np.nonzero(lab[y0:py + r + 1, x0:px + r + 1] == main)
+        j = int(np.argmin((my + y0 - py) ** 2 + (mx + x0 - px) ** 2))
+        cv2.line(out, (px, py), (int(mx[j] + x0), int(my[j] + y0)), 1, max(1, bridge_px))
+        joined += 1
+    return np.where(out > 0, METAL, EMPTY).astype(np.uint8), joined
+
+
 # ---------------------------------------------------------------------------
 # The whole pipeline
 # ---------------------------------------------------------------------------
@@ -477,6 +550,15 @@ def convert(gray: np.ndarray, s: Settings
     metal, report.small_holes_filled = fill_small_holes(
         metal, circle_area_px(mm_to_px(s.min_hole_mm, ppm)))
     metal, report.bridges_added = add_bridges(metal, bridge_px)
+    if s.stand_mm > 0:
+        metal = add_stand(metal, mm_to_px(s.stand_mm, ppm), mm_to_px(60, ppm), mm_to_px(4, ppm))
+        before = cv2.copyMakeBorder(before, 0, metal.shape[0] - before.shape[0], 0, 0,
+                                    cv2.BORDER_CONSTANT, value=EMPTY)
+        metal = cv2.copyMakeBorder(metal, 0, border, 0, 0, cv2.BORDER_CONSTANT, value=EMPTY)
+        before = cv2.copyMakeBorder(before, 0, border, 0, 0, cv2.BORDER_CONSTANT, value=EMPTY)
+        report.stand_added = True
+    if s.join_parts:
+        metal, report.parts_joined = join_parts(metal, bridge_px)
 
     contours = extract_contours(metal, s.simplify_mm * ppm)
     polylines = contours_to_mm(contours, metal.shape[0], ppm)
@@ -514,6 +596,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--px-per-mm", type=float, default=5.0, help="working resolution (default 5)")
     p.add_argument("--threshold", type=int, help="dark/light cut-off 0-255 (default: automatic)")
     p.add_argument("--no-preview", action="store_true", help="do not save the preview PNG")
+    p.add_argument("--stand-mm", type=float, default=0.0,
+                   help="add a straight tab this tall under the design for a slotted stand (e.g. 12)")
+    p.add_argument("--join-parts", action="store_true", help="connect separate pieces into one piece")
+    p.add_argument("--ignore-alpha", action="store_true",
+                   help="treat transparent PNGs by color instead of as a ready silhouette")
     return p.parse_args(argv)
 
 
@@ -523,6 +610,7 @@ def settings_from_args(a: argparse.Namespace) -> Settings:
         min_hole_mm=a.min_hole_mm, min_detail_mm=a.min_detail_mm,
         bridge_width_mm=a.bridge_width_mm, mode=a.mode, margin_mm=a.margin_mm,
         simplify_mm=a.simplify_mm, px_per_mm=a.px_per_mm, threshold=a.threshold,
+        stand_mm=a.stand_mm, join_parts=a.join_parts,
     )
 
 
@@ -538,6 +626,10 @@ def print_report(r: Report, dxf_path: str, preview_path: str | None) -> None:
     print(f"Thin area fixed:{r.thin_area_added_mm2} mm2")
     print(f"Holes filled:   {r.small_holes_filled}")
     print(f"Bridges added:  {r.bridges_added}")
+    if r.stand_added:
+        print("Stand tab:      added")
+    if r.parts_joined:
+        print(f"Parts joined:   {r.parts_joined}")
     for w in r.warnings:
         print(f"WARNING: {w}")
 
@@ -546,7 +638,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         settings = settings_from_args(args)
-        gray = load_grayscale(args.input)
+        gray = load_grayscale(args.input, use_alpha=not args.ignore_alpha)
         polylines, preview, report = convert(gray, settings)
         if not polylines:
             raise ValueError("No outlines found - is the image dark-on-light?")

@@ -50,6 +50,20 @@ python img2dxf.py test_images\text.png text.dxf --width-mm 400 --mode stencil
 | `--min-width-mm` | = thickness | Thinnest allowed metal line |
 | `--bridge-width-mm` | 1.5 x thickness | Width of added bridges |
 | `--margin-mm` | 15 | Plate border in stencil mode |
+| `--stand-mm` | 0 (off) | Add a straight tab this tall under the design, for a slotted stand (e.g. 12) |
+| `--join-parts` | off | Connect separate pieces into one piece with short bridges |
+| `--ignore-alpha` | off | Read a transparent PNG by its colors instead of as a ready silhouette |
+
+### Photos (personalization)
+
+A normal photo does not work directly: the background gets cut too. Remove the
+background first (Windows Paint: "Remove background", or a phone gallery), save
+as PNG, then run the tool. Every visible pixel becomes steel, so light clothes
+do not turn into holes:
+
+```
+python img2dxf.py person_nobg.png person.dxf --width-mm 150 --stand-mm 12 --join-parts
+```
 
 Run `python img2dxf.py --help` for all options.
 
