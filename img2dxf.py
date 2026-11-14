@@ -51,6 +51,7 @@ class Settings:
     threshold: int | None = None         # 0-255, None = automatic (Otsu)
     stand_mm: float = 0.0                # >0: add a straight tab this tall under the design, for a slotted stand
     join_parts: bool = False             # connect separate pieces to the main piece with short bridges
+    frame_mm: float = 0.0                # >0: add a border frame this wide that holds every piece (detailed scenes)
 
     def __post_init__(self) -> None:
         if self.width_mm <= 0:
@@ -514,6 +515,21 @@ def join_parts(mask: np.ndarray, bridge_px: int, max_rounds: int = 50) -> tuple[
     return np.where(out > 0, METAL, EMPTY).astype(np.uint8), joined
 
 
+def add_frame(mask: np.ndarray, frame_px: int) -> np.ndarray:
+    """Draw a solid border around the whole picture.
+
+    In a detailed scene many parts touch nothing; the frame gives every part
+    something to hang on (use together with join_parts).
+    """
+    out = mask.copy()
+    f = max(1, frame_px)
+    out[:f, :] = METAL
+    out[-f:, :] = METAL
+    out[:, :f] = METAL
+    out[:, -f:] = METAL
+    return out
+
+
 # ---------------------------------------------------------------------------
 # The whole pipeline
 # ---------------------------------------------------------------------------
@@ -540,6 +556,8 @@ def convert(gray: np.ndarray, s: Settings
         metal = make_stencil(design, mm_to_px(s.margin_mm, ppm))
     else:
         metal = design
+    if s.frame_mm > 0:
+        metal = add_frame(metal, mm_to_px(s.frame_mm, ppm))
     metal = pad(metal, border)
     before = metal.copy()
 
@@ -599,6 +617,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--stand-mm", type=float, default=0.0,
                    help="add a straight tab this tall under the design for a slotted stand (e.g. 12)")
     p.add_argument("--join-parts", action="store_true", help="connect separate pieces into one piece")
+    p.add_argument("--frame-mm", type=float, default=0.0,
+                   help="add a border frame this wide around the picture (detailed scenes, e.g. 6)")
     p.add_argument("--ignore-alpha", action="store_true",
                    help="treat transparent PNGs by color instead of as a ready silhouette")
     return p.parse_args(argv)
@@ -610,7 +630,7 @@ def settings_from_args(a: argparse.Namespace) -> Settings:
         min_hole_mm=a.min_hole_mm, min_detail_mm=a.min_detail_mm,
         bridge_width_mm=a.bridge_width_mm, mode=a.mode, margin_mm=a.margin_mm,
         simplify_mm=a.simplify_mm, px_per_mm=a.px_per_mm, threshold=a.threshold,
-        stand_mm=a.stand_mm, join_parts=a.join_parts,
+        stand_mm=a.stand_mm, join_parts=a.join_parts, frame_mm=a.frame_mm,
     )
 
 

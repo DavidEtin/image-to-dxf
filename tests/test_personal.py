@@ -37,3 +37,15 @@ def test_stand_tab_is_added_below_the_design():
     assert out.shape[0] > mask.shape[0]           # the image grew downwards
     assert out[95, 100] == 255                    # metal right under the design
     assert np.count_nonzero(out[105]) >= 40       # the tab is at least min_len_px long
+
+
+def test_frame_holds_a_floating_piece():
+    from img2dxf import add_frame, join_parts
+    mask = np.zeros((100, 100), np.uint8)
+    mask[45:55, 45:55] = 255                      # a piece in the middle, touching nothing
+    framed = add_frame(mask, frame_px=5)
+    assert framed[0, 50] == 255 and framed[50, 0] == 255   # the border is metal
+    joined, bridges = join_parts(framed, bridge_px=3)
+    pieces = cv2.connectedComponents((joined > 0).astype(np.uint8))[0] - 1
+    assert pieces == 1                            # frame and piece are now one part
+    assert bridges == 1

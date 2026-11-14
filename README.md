@@ -52,6 +52,7 @@ python img2dxf.py test_images\text.png text.dxf --width-mm 400 --mode stencil
 | `--margin-mm` | 15 | Plate border in stencil mode |
 | `--stand-mm` | 0 (off) | Add a straight tab this tall under the design, for a slotted stand (e.g. 12) |
 | `--join-parts` | off | Connect separate pieces into one piece with short bridges |
+| `--frame-mm` | 0 (off) | Border frame around the picture, so every part of a detailed scene has something to hang on (use with `--join-parts`) |
 | `--ignore-alpha` | off | Read a transparent PNG by its colors instead of as a ready silhouette |
 
 ### Photos (personalization)
