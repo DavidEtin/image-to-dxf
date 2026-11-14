@@ -654,7 +654,36 @@ def print_report(r: Report, dxf_path: str, preview_path: str | None) -> None:
         print(f"WARNING: {w}")
 
 
+def ask_for_args(ask=input) -> list[str]:
+    """Interactive mode: ask the questions one by one and build the command line.
+
+    `ask` is input() normally; tests pass a fake one.
+    """
+    def yes(question: str, default: bool) -> bool:
+        hint = "Y/n" if default else "y/N"
+        answer = ask(f"{question} [{hint}]: ").strip().lower()
+        return default if answer == "" else answer.startswith("y")
+
+    src = ""
+    while not src:
+        src = ask("Image file (drag it here): ").strip().strip('"').strip("'")
+    default_out = str(Path(src).with_suffix(".dxf"))
+    out = ask(f"Save DXF as [{default_out}]: ").strip().strip('"') or default_out
+    width = ask("Width in mm [200]: ").strip() or "200"
+    args = [src, out, "--width-mm", width]
+    if yes("Frame around the picture (detailed scene)?", False):
+        args += ["--frame-mm", ask("Frame width in mm [6]: ").strip() or "6"]
+    if yes("Tab at the bottom for the wooden stand?", True):
+        args += ["--stand-mm", "12"]
+    if yes("Connect separate pieces into one?", True):
+        args += ["--join-parts"]
+    return args
+
+
 def main(argv: list[str] | None = None) -> int:
+    if argv is None and len(sys.argv) == 1:      # no arguments: ask instead
+        argv = ask_for_args()
+        print("Running: python img2dxf.py " + " ".join(f'"{a}"' if " " in a else a for a in argv))
     args = parse_args(argv)
     try:
         settings = settings_from_args(args)

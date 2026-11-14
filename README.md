@@ -55,6 +55,14 @@ python img2dxf.py test_images\text.png text.dxf --width-mm 400 --mode stencil
 | `--frame-mm` | 0 (off) | Border frame around the picture, so every part of a detailed scene has something to hang on (use with `--join-parts`) |
 | `--ignore-alpha` | off | Read a transparent PNG by its colors instead of as a ready silhouette |
 
+### Easiest: let it ask
+
+Run it with no arguments and answer the questions (image, width, frame, stand tab, join pieces):
+
+```
+python img2dxf.py
+```
+
 ### Photos (personalization)
 
 A normal photo does not work directly: the background gets cut too. Remove the

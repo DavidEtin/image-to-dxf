@@ -49,3 +49,15 @@ def test_frame_holds_a_floating_piece():
     pieces = cv2.connectedComponents((joined > 0).astype(np.uint8))[0] - 1
     assert pieces == 1                            # frame and piece are now one part
     assert bridges == 1
+
+
+def test_interactive_mode_builds_the_command():
+    from img2dxf import ask_for_args
+    answers = iter(['"C:\\photos\\dana.png"', "", "150", "y", "", "", "n"])
+    args = ask_for_args(ask=lambda question: next(answers))
+    assert args[0] == "C:\\photos\\dana.png"          # quotes from drag-and-drop are removed
+    assert args[1].endswith("dana.dxf")               # output name defaults to the image name
+    assert args[2:4] == ["--width-mm", "150"]
+    assert "--frame-mm" in args and "6" in args       # frame chosen, default width 6
+    assert "--stand-mm" in args                       # stand tab: default yes
+    assert "--join-parts" not in args                 # answered no
